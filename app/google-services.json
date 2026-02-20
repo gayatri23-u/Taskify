@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "550996143188",
+    "project_id": "schedule-tracker-64180",
+    "storage_bucket": "schedule-tracker-64180.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:550996143188:android:0b283a838a788da19611c1",
+        "android_client_info": {
+          "package_name": "com.example.scheduletracker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAGT71XYISktetBGBbTq-4VJsHSJSK2sus"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

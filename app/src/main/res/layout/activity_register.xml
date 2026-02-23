@@ -11,16 +11,17 @@
         android:layout_height="match_parent">
 
         <!-- your UI components go here -->
-        <ImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/imgLogo"
             android:layout_width="110dp"
             android:layout_height="110dp"
-            android:layout_marginTop="15dp"
-            android:src="@drawable/ic_launcher_foreground"
-            app:background="@android:color/transparent"
-            app:layout_constraintEnd_toEndOf="parent"
+            android:layout_marginTop="55dp"
+            android:src="@drawable/app_logo"
+            android:scaleType="centerCrop"
+            app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent" />
+            app:layout_constraintEnd_toEndOf="parent"
+            app:shapeAppearanceOverlay="@style/CircleImageView"/>
 
 
         <TextView

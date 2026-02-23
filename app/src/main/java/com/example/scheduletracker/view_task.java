@@ -13,6 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.PopupMenu;
 
@@ -23,6 +24,7 @@ import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
+import com.google.firebase.firestore.WriteBatch;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -40,7 +42,6 @@ public class view_task extends AppCompatActivity {
     TextView txtMonth;
 
     LinearLayout containerTaskRows;
-
     HorizontalScrollView headerScroll;
     LinearLayout layoutHeaderRow;
 
@@ -101,45 +102,11 @@ public class view_task extends AppCompatActivity {
             loadTasksForMonth();
         });
 
-        btnAddTask.setOnClickListener(v->{
-            Intent intent = new Intent(this, add_task.class);
-            startActivity(intent);
-        });
+        btnAddTask.setOnClickListener(v ->
+                startActivity(new Intent(this, add_task.class)));
 
-        //jump to today when clicked on jump on today
         btnJumpToday.setOnClickListener(v -> autoScrollToTodayCentered());
-
-        //view stats when clicked on view stats
         btnViewStats.setOnClickListener(v -> showStatsBottomSheet());
-
-
-        //move to selected date when cicked on dashboard
-
-        String selectedDate = getIntent().getStringExtra("selectedDate");
-
-        if (selectedDate != null) {
-            try {
-                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
-                Date date = sdf.parse(selectedDate);
-
-                Calendar cal = Calendar.getInstance();
-                cal.setTime(date);
-
-                currentCalendar.set(Calendar.YEAR, cal.get(Calendar.YEAR));
-                currentCalendar.set(Calendar.MONTH, cal.get(Calendar.MONTH));
-
-                updateMonthText();
-                buildHeaderRow();
-                loadTasksForMonth();
-
-                // Scroll to that day
-                int selectedDay = cal.get(Calendar.DAY_OF_MONTH);
-                scrollToDay(selectedDay);
-
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
     }
 
     private void updateMonthText() {
@@ -192,7 +159,6 @@ public class view_task extends AppCompatActivity {
 
                     Map<String, Map<Integer, Boolean>> taskMonthMap = new HashMap<>();
                     int[] pending = {0};
-                    boolean[] foundAny = {false};
 
                     for (QueryDocumentSnapshot dateDoc : dateSnapshots) {
                         String dateKey = dateDoc.getId();
@@ -203,16 +169,11 @@ public class view_task extends AppCompatActivity {
 
                         if (y == year && m == month) {
                             pending[0]++;
-                            foundAny[0] = true;
 
-                            db.collection("Tasks")
-                                    .document(uid)
-                                    .collection("dates")
-                                    .document(dateKey)
+                            dateDoc.getReference()
                                     .collection("items")
                                     .get()
                                     .addOnSuccessListener(items -> {
-
                                         for (QueryDocumentSnapshot itemDoc : items) {
                                             String title = itemDoc.getString("title");
                                             Boolean completed = itemDoc.getBoolean("completed");
@@ -231,10 +192,6 @@ public class view_task extends AppCompatActivity {
                                         }
                                     });
                         }
-                    }
-
-                    if (!foundAny[0]) {
-                        Toast.makeText(this, "No tasks for this month", Toast.LENGTH_SHORT).show();
                     }
                 });
     }
@@ -256,7 +213,6 @@ public class view_task extends AppCompatActivity {
             txtTaskName.setText(taskName);
 
             Map<Integer, Boolean> dayStatusMap = taskMonthMap.get(taskName);
-            if (dayStatusMap == null) dayStatusMap = new HashMap<>();
 
             for (int day = 1; day <= daysInMonth; day++) {
                 FrameLayout cell = createDayCell(
@@ -312,14 +268,8 @@ public class view_task extends AppCompatActivity {
 
         cell.addView(icon);
 
-        //  Block future days
         Calendar cellDate = Calendar.getInstance();
-        cellDate.set(Calendar.YEAR, year);
-        cellDate.set(Calendar.MONTH, month - 1); // Calendar months are 0-based
-        cellDate.set(Calendar.DAY_OF_MONTH, day);
-        cellDate.set(Calendar.HOUR_OF_DAY, 0);
-        cellDate.set(Calendar.MINUTE, 0);
-        cellDate.set(Calendar.SECOND, 0);
+        cellDate.set(year, month - 1, day, 0, 0, 0);
         cellDate.set(Calendar.MILLISECOND, 0);
 
         Calendar today = Calendar.getInstance();
@@ -331,13 +281,11 @@ public class view_task extends AppCompatActivity {
         boolean isFuture = cellDate.after(today);
 
         if (isFuture) {
-            //  Disable future days
-            cell.setAlpha(0.4f); // faded look
+            cell.setAlpha(0.4f);
             cell.setOnClickListener(v ->
-                    Toast.makeText(this, "You can’t mark future days yet ", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "You can’t mark future days yet", Toast.LENGTH_SHORT).show()
             );
         } else {
-            // Allow marking today & past
             cell.setOnClickListener(v ->
                     showStatusPopup(taskName, day, year, month, cell, icon)
             );
@@ -345,6 +293,7 @@ public class view_task extends AppCompatActivity {
 
         return cell;
     }
+
     private void showStatusPopup(String taskName, int day, int year, int month,
                                  FrameLayout cell, ImageView icon) {
 
@@ -354,20 +303,21 @@ public class view_task extends AppCompatActivity {
         PopupMenu popup = new PopupMenu(this, cell);
         popup.getMenu().add("Done");
         popup.getMenu().add("Not Done");
+        popup.getMenu().add("Delete for Today");
+        popup.getMenu().add("Delete for All Dates");
 
         popup.setOnMenuItemClickListener(item -> {
-            boolean isDone = item.getTitle().equals("Done");
+            String action = item.getTitle().toString();
 
-            if (isDone) {
-                cell.setBackgroundResource(R.drawable.bg_day_success);
-                icon.setImageResource(R.drawable.ic_tick_green);
-            } else {
-                cell.setBackgroundResource(R.drawable.bg_day_failed);
-                icon.setImageResource(R.drawable.ic_cross_red);
+            if (action.equals("Done")) {
+                updateTaskStatusInFirebase(taskName, dateKey, true);
+            } else if (action.equals("Not Done")) {
+                updateTaskStatusInFirebase(taskName, dateKey, false);
+            } else if (action.equals("Delete for Today")) {
+                deleteTaskForTodayByTitle(taskName, dateKey);
+            } else if (action.equals("Delete for All Dates")) {
+                showDeleteAllConfirmDialogByTitle(taskName);
             }
-            icon.setVisibility(View.VISIBLE);
-
-            updateTaskStatusInFirebase(taskName, dateKey, isDone);
             return true;
         });
 
@@ -375,31 +325,6 @@ public class view_task extends AppCompatActivity {
     }
 
     private void updateTaskStatusInFirebase(String taskName, String dateKey, boolean completed) {
-
-        if (currentUser == null) {
-            Toast.makeText(this, "User not logged in", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        //  Block future date updates at backend level too
-        try {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
-            Date selectedDate = sdf.parse(dateKey);
-
-            Calendar today = Calendar.getInstance();
-            today.set(Calendar.HOUR_OF_DAY, 0);
-            today.set(Calendar.MINUTE, 0);
-            today.set(Calendar.SECOND, 0);
-            today.set(Calendar.MILLISECOND, 0);
-
-            if (selectedDate != null && selectedDate.after(today.getTime())) {
-                Toast.makeText(this, "Future dates cannot be updated", Toast.LENGTH_SHORT).show();
-                return;
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
         String uid = currentUser.getUid();
 
         db.collection("Tasks")
@@ -410,39 +335,104 @@ public class view_task extends AppCompatActivity {
                 .whereEqualTo("title", taskName)
                 .get()
                 .addOnSuccessListener(snapshot -> {
-
-                    if (snapshot.isEmpty()) {
-                        Toast.makeText(this, "Task not found", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-
                     for (QueryDocumentSnapshot doc : snapshot) {
                         doc.getReference().update("completed", completed);
                     }
+                    loadTasksForMonth();
+                });
+    }
 
-                    Toast.makeText(this, "Task updated", Toast.LENGTH_SHORT).show();
+    private void deleteTaskForTodayByTitle(String taskName, String dateKey) {
+        String uid = currentUser.getUid();
 
-                    //Call these if this screen also shows stats
-                    //loadTodayProgress();
-                    //loadCurrentStreak();
-                   // loadMonthlyCompletion();
+        db.collection("Tasks")
+                .document(uid)
+                .collection("dates")
+                .document(dateKey)
+                .collection("items")
+                .whereEqualTo("title", taskName)
+                .get()
+                .addOnSuccessListener(snapshot -> {
+                    for (QueryDocumentSnapshot doc : snapshot) {
+                        doc.getReference().delete();
+                    }
+                    Toast.makeText(this, "Task deleted", Toast.LENGTH_SHORT).show();
+                    new android.os.Handler(getMainLooper()).postDelayed(this::loadTasksForMonth, 100);
+                });
+    }
+
+    private void showDeleteAllConfirmDialogByTitle(String taskName) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete Task")
+                .setMessage("This will delete this task from all dates. Are you sure?")
+                .setPositiveButton("Delete", (dialog, which) -> deleteTaskForAllDatesByTitle(taskName))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    //  FIXED: waits for all queries, then commits batch once
+    private void deleteTaskForAllDatesByTitle(String taskName) {
+        String uid = currentUser.getUid();
+
+        db.collection("Tasks")
+                .document(uid)
+                .collection("dates")
+                .get()
+                .addOnSuccessListener(dateSnapshots -> {
+
+                    List<com.google.firebase.firestore.DocumentReference> toDelete = new ArrayList<>();
+                    int totalDates = dateSnapshots.size();
+                    if (totalDates == 0) return;
+
+                    final int[] pending = { totalDates };
+
+                    for (QueryDocumentSnapshot dateDoc : dateSnapshots) {
+                        dateDoc.getReference()
+                                .collection("items")
+                                .whereEqualTo("title", taskName)
+                                .get()
+                                .addOnSuccessListener(items -> {
+                                    for (QueryDocumentSnapshot doc : items) {
+                                        toDelete.add(doc.getReference());
+                                    }
+
+                                    pending[0]--;
+                                    if (pending[0] == 0) {
+                                        WriteBatch batch = db.batch();
+                                        for (com.google.firebase.firestore.DocumentReference ref : toDelete) {
+                                            batch.delete(ref);
+                                        }
+
+                                        batch.commit()
+                                                .addOnSuccessListener(aVoid -> {
+                                                    Toast.makeText(this, "Task deleted from all dates", Toast.LENGTH_SHORT).show();
+                                                    loadTasksForMonth();
+                                                })
+                                                .addOnFailureListener(e ->
+                                                        Toast.makeText(this, "Delete failed: " + e.getMessage(), Toast.LENGTH_SHORT).show()
+                                                );
+                                    }
+                                })
+                                .addOnFailureListener(e -> {
+                                    pending[0]--;
+                                    if (pending[0] == 0) {
+                                        Toast.makeText(this, "Delete failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                                    }
+                                });
+                    }
                 })
                 .addOnFailureListener(e ->
-                        Toast.makeText(this, "Update failed: " + e.getMessage(), Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Delete failed: " + e.getMessage(), Toast.LENGTH_SHORT).show()
                 );
     }
 
     private void syncScrolls() {
         final List<HorizontalScrollView> syncedScrolls = new ArrayList<>(rowScrolls);
-
         headerScroll.getViewTreeObserver().addOnScrollChangedListener(
-                new ViewTreeObserver.OnScrollChangedListener() {
-                    @Override
-                    public void onScrollChanged() {
-                        int x = headerScroll.getScrollX();
-                        for (HorizontalScrollView rowScroll : syncedScrolls) {
-                            rowScroll.scrollTo(x, 0);
-                        }
+                () -> {
+                    int x = headerScroll.getScrollX();
+                    for (HorizontalScrollView rowScroll : syncedScrolls) {
+                        rowScroll.scrollTo(x, 0);
                     }
                 }
         );
@@ -454,12 +444,10 @@ public class view_task extends AppCompatActivity {
 
     private void autoScrollToTodayCentered() {
         Calendar today = Calendar.getInstance();
-
         if (today.get(Calendar.YEAR) != currentCalendar.get(Calendar.YEAR) ||
                 today.get(Calendar.MONTH) != currentCalendar.get(Calendar.MONTH)) return;
 
         int todayDay = today.get(Calendar.DAY_OF_MONTH);
-
         int cellSize = dpToPx(40);
         int margin = dpToPx(6);
         int fullCellWidth = cellSize + (margin * 2);
@@ -468,9 +456,7 @@ public class view_task extends AppCompatActivity {
         int calculatedScrollX =
                 (todayDay - 1) * fullCellWidth - (screenWidth / 2) + (fullCellWidth / 2);
 
-        final int targetScrollX = Math.max(0, calculatedScrollX);
-
-        headerScroll.post(() -> headerScroll.smoothScrollTo(targetScrollX, 0));
+        headerScroll.post(() -> headerScroll.smoothScrollTo(Math.max(0, calculatedScrollX), 0));
     }
 
     private void showStatsBottomSheet() {
@@ -489,6 +475,7 @@ public class view_task extends AppCompatActivity {
         loadMonthlyCompletionInto(txtMonth);
     }
 
+    // keep your existing implementations here
     private void loadTodayProgressInto(TextView target) {
         if (currentUser == null) return;
 
@@ -514,19 +501,27 @@ public class view_task extends AppCompatActivity {
                     if (total == 0) {
                         target.setText("No tasks today");
                     } else {
-                        target.setText(done + " / " + total + " Done Today");
+                        target.setText(done + " / " + total + " Tasks Done");
                     }
                 })
                 .addOnFailureListener(e -> target.setText("Error"));
     }
 
+
+    //load current streak into
     private void loadCurrentStreakInto(TextView target) {
         if (currentUser == null) return;
 
         Calendar cal = Calendar.getInstance();
+        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.MINUTE, 0);
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
+
         checkStreakDay(cal, 0, target);
     }
 
+    //load streak day
     private void checkStreakDay(Calendar cal, int streak, TextView target) {
         String uid = currentUser.getUid();
         String dateKey = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -564,6 +559,8 @@ public class view_task extends AppCompatActivity {
                 .addOnFailureListener(e -> target.setText("0 Days"));
     }
 
+
+    //load monthly completion
     private void loadMonthlyCompletionInto(TextView target) {
         if (currentUser == null) return;
 
@@ -591,10 +588,7 @@ public class view_task extends AppCompatActivity {
                         if (y == year && m == month) {
                             pending[0]++;
 
-                            db.collection("Tasks")
-                                    .document(uid)
-                                    .collection("dates")
-                                    .document(dateKey)
+                            dateDoc.getReference()
                                     .collection("items")
                                     .get()
                                     .addOnSuccessListener(items -> {
@@ -622,15 +616,5 @@ public class view_task extends AppCompatActivity {
                     }
                 })
                 .addOnFailureListener(e -> target.setText("0%"));
-    }
-
-    private void scrollToDay(int day) {
-        int cellSize = dpToPx(40);
-        int margin = dpToPx(6);
-        int fullCellWidth = cellSize + (margin * 2);
-
-        int targetScrollX = (day - 1) * fullCellWidth;
-
-        headerScroll.post(() -> headerScroll.smoothScrollTo(targetScrollX, 0));
     }
 }

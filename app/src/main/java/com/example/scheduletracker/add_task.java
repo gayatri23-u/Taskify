@@ -143,6 +143,9 @@ public class add_task extends AppCompatActivity {
             task.put("date", dateKey);
             task.put("userId", uid);
 
+            String createdOn = dateFormat.format(Calendar.getInstance().getTime());
+            task.put("createdOn", createdOn);
+
             // Add operations to the batch
             // Explicitly create/merge the date document to ensure it exists for queries
             batch.set(dateDocRef, new HashMap<>(), SetOptions.merge());

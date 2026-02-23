@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.cardview.widget.CardView;
 
 import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FirebaseFirestore;
@@ -25,6 +26,7 @@ import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -51,6 +53,11 @@ public class dashboard extends AppCompatActivity {
         setContentView(R.layout.activity_dashboard);
 
         MaterialToolbar toolbar = findViewById(R.id.toolbarDashboard);
+        CardView cardBadges = findViewById(R.id.cardBadges);
+
+        cardBadges.setOnClickListener(v ->
+                startActivity(new Intent(dashboard.this, BadgesActivity.class))
+        );
 
         gridCalendar = findViewById(R.id.gridCalendar);
         txtMonthYear = findViewById(R.id.txtMonthYear);
@@ -113,10 +120,14 @@ public class dashboard extends AppCompatActivity {
             popupMenu.show();
         });
 
+        //stast details
         loadCalendarFromFirebase();
         loadTodayProgress();
         loadCurrentStreak();
         loadMonthlyCompletion();
+
+        //reminders call
+        scheduleDailyReminders();
     }
 
     @Override
@@ -272,37 +283,55 @@ public class dashboard extends AppCompatActivity {
 
         //  Tap → open that day in view_task
         cell.setOnClickListener(v -> {
-            Intent i = new Intent(dashboard.this, view_task.class);
-            i.putExtra("year", currentCalendar.get(Calendar.YEAR));
-            i.putExtra("month", currentCalendar.get(Calendar.MONTH) + 1);
-            i.putExtra("day", day);
-            startActivity(i);
-        });
+            String dateKey = String.format(Locale.getDefault(),
+                    "%04d-%02d-%02d",
+                    currentCalendar.get(Calendar.YEAR),
+                    currentCalendar.get(Calendar.MONTH) + 1,
+                    day
+            );
 
+            showStatsBottomSheetForDate(dateKey);
+        });
         gridCalendar.addView(cell);
     }
 
     // ===== Stats logic (unchanged but works live) =====
 
     private void loadTodayProgress() {
+        FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
         if (currentUser == null) return;
 
         String uid = currentUser.getUid();
         String todayKey = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                 .format(Calendar.getInstance().getTime());
 
-        db.collection("Tasks").document(uid)
-                .collection("dates").document(todayKey)
+        FirebaseFirestore.getInstance()
+                .collection("Tasks")
+                .document(uid)
+                .collection("dates")
+                .document(todayKey)
                 .collection("items")
                 .get()
                 .addOnSuccessListener(snapshot -> {
-                    int total = snapshot.size();
+
+                    int total = 0;
                     int done = 0;
+
                     for (QueryDocumentSnapshot doc : snapshot) {
+                        // 🔥 Only count tasks that are not placeholder/invalid
+                        String title = doc.getString("title");
+                        if (title == null || title.trim().isEmpty()) continue;
+
+                        total++;
+
                         Boolean completed = doc.getBoolean("completed");
                         if (completed != null && completed) done++;
                     }
-                    txtTodayProgress.setText(done + " / " + total + " Tasks Done");
+
+                    TextView txtTodayProgress = findViewById(R.id.txtTodayProgress);
+                    txtTodayProgress.setText(total == 0
+                            ? "No tasks today"
+                            : done + " / " + total + " Tasks Done");
                 });
     }
 
@@ -320,10 +349,19 @@ public class dashboard extends AppCompatActivity {
                 .collection("items")
                 .get()
                 .addOnSuccessListener(snapshot -> {
-                    boolean allDone = !snapshot.isEmpty();
+
+                    if (snapshot.isEmpty()) {
+                        txtStreakCount.setText(streak + " Days");
+                        return;
+                    }
+
+                    boolean allDone = true;
                     for (QueryDocumentSnapshot doc : snapshot) {
                         Boolean completed = doc.getBoolean("completed");
-                        if (completed == null || !completed) allDone = false;
+                        if (completed == null || !completed) {
+                            allDone = false;
+                            break;
+                        }
                     }
 
                     if (allDone) {
@@ -331,6 +369,15 @@ public class dashboard extends AppCompatActivity {
                         calculateStreak(cal, streak + 1);
                     } else {
                         txtStreakCount.setText(streak + " Days");
+                        //badge unloack check
+                        checkAndUnlockBadges(
+                                streak,
+                                0,
+                                0
+                        );
+
+                        //badge unlock logic
+                        loadTotalCompletedTasksAndUnlockBadges(streak);
                     }
                 });
     }
@@ -346,7 +393,10 @@ public class dashboard extends AppCompatActivity {
                 .collection("dates")
                 .get()
                 .addOnSuccessListener(dateSnapshots -> {
-                    int total = 0, done = 0;
+
+                    int[] total = {0};
+                    int[] done = {0};
+                    int[] pending = {0};
 
                     for (QueryDocumentSnapshot dateDoc : dateSnapshots) {
                         String[] parts = dateDoc.getId().split("-");
@@ -354,12 +404,37 @@ public class dashboard extends AppCompatActivity {
                         int m = Integer.parseInt(parts[1]);
 
                         if (y == year && m == month) {
-                            // You can aggregate here same as calendar
+                            pending[0]++;
+
+                            db.collection("Tasks")
+                                    .document(uid)
+                                    .collection("dates")
+                                    .document(dateDoc.getId())
+                                    .collection("items")
+                                    .get()
+                                    .addOnSuccessListener(items -> {
+                                        for (QueryDocumentSnapshot doc : items) {
+                                            total[0]++;
+                                            Boolean completed = doc.getBoolean("completed");
+                                            if (completed != null && completed) done[0]++;
+                                        }
+
+                                        pending[0]--;
+                                        if (pending[0] == 0) {
+                                            if (total[0] == 0) {
+                                                txtMonthlyCompletion.setText("0%");
+                                            } else {
+                                                int percent = (done[0] * 100) / total[0];
+                                                txtMonthlyCompletion.setText(percent + "%");
+                                            }
+                                        }
+                                    });
                         }
                     }
 
-                    if (total == 0) txtMonthlyCompletion.setText("0%");
-                    else txtMonthlyCompletion.setText((done * 100 / total) + "%");
+                    if (pending[0] == 0) {
+                        txtMonthlyCompletion.setText("0%");
+                    }
                 });
     }
 
@@ -395,5 +470,190 @@ public class dashboard extends AppCompatActivity {
         });
 
         dialog.show();
+    }
+
+
+    //show stast bottom sheett for dates
+    private void showStatsBottomSheetForDate(String dateKey) {
+        BottomSheetDialog dialog = new BottomSheetDialog(this);
+        View view = getLayoutInflater().inflate(R.layout.bottomsheet_stats, null);
+
+        TextView txtTitle = view.findViewById(R.id.txtTitle);
+        TextView txtStreak = view.findViewById(R.id.txtStreak);
+        TextView txtToday = view.findViewById(R.id.txtTodayProgress);
+        TextView txtMonth = view.findViewById(R.id.txtMonthlyCompletion);
+
+        dialog.setContentView(view);
+        dialog.show();
+
+        // Set title as selected date
+        try {
+            Date d = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateKey);
+            String pretty = new SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(d);
+            txtTitle.setText("Stats for " + pretty);
+        } catch (Exception e) {
+            txtTitle.setText("Stats for " + dateKey);
+        }
+
+        loadStatsForDateInto(dateKey, txtStreak, txtToday, txtMonth);
+    }
+
+    private void loadStatsForDateInto(String dateKey,
+                                      TextView txtStreak,
+                                      TextView txtToday,
+                                      TextView txtMonth) {
+
+        if (currentUser == null) return;
+        String uid = currentUser.getUid();
+
+        db.collection("Tasks")
+                .document(uid)
+                .collection("dates")
+                .document(dateKey)
+                .collection("items")
+                .get()
+                .addOnSuccessListener(snapshot -> {
+
+                    int total = snapshot.size();
+                    int done = 0;
+
+                    for (QueryDocumentSnapshot doc : snapshot) {
+                        Boolean completed = doc.getBoolean("completed");
+                        if (completed != null && completed) done++;
+                    }
+
+                    // Reuse fields meaningfully for that day
+                    txtToday.setText(done + " / " + total + " Done");
+
+                    if (total == 0) {
+                        txtMonth.setText("0%");
+                    } else {
+                        int percent = (done * 100) / total;
+                        txtMonth.setText(percent + "%");
+                    }
+
+                    // Streak label for that date (optional wording)
+                    txtStreak.setText(done == total && total > 0
+                            ? "All tasks completed 🎉"
+                            : "Tasks completed: " + done);
+                })
+                .addOnFailureListener(e -> {
+                    txtToday.setText("0 / 0 Done");
+                    txtMonth.setText("0%");
+                    txtStreak.setText("No data");
+                });
+    }
+
+    private void scheduleDailyReminders() {
+        scheduleDailyReminder(MorningReminderWorker.class, 8, 0, "morning_reminder");
+        scheduleDailyReminder(NightReminderWorker.class, 21, 30, "night_reminder");
+
+    }
+
+    private void scheduleDailyReminder(Class<? extends androidx.work.Worker> workerClass,
+                                       int hour, int minute, String tag) {
+
+        Calendar now = Calendar.getInstance();
+        Calendar target = Calendar.getInstance();
+        target.set(Calendar.HOUR_OF_DAY, hour);
+        target.set(Calendar.MINUTE, minute);
+        target.set(Calendar.SECOND, 0);
+
+        if (target.before(now)) {
+            target.add(Calendar.DAY_OF_MONTH, 1); // next day
+        }
+
+        long delay = target.getTimeInMillis() - now.getTimeInMillis();
+
+        androidx.work.OneTimeWorkRequest request =
+                new androidx.work.OneTimeWorkRequest.Builder(workerClass)
+                        .setInitialDelay(delay, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        .addTag(tag)
+                        .build();
+
+        androidx.work.WorkManager.getInstance(this)
+                .enqueueUniqueWork(
+                        tag,
+                        androidx.work.ExistingWorkPolicy.REPLACE,
+                        request
+                );
+    }
+
+
+    //badge uloack logic
+    private void checkAndUnlockBadges(int currentStreak, int totalTasksCompletedThisWeek, int totalTasksCompletedOverall) {
+
+        if (currentUser == null) return;
+
+        String uid = currentUser.getUid();
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+
+        //  5-Day Streak
+        if (currentStreak >= 5) {
+            unlockBadge(db, uid, "5_day_streak",
+                    "5-Day Streak Achiever",
+                    "Completed all tasks for 5 days");
+        }
+
+        // Perfect Week (7 days streak)
+        if (currentStreak >= 7) {
+            unlockBadge(db, uid, "perfect_week",
+                    "Perfect Week",
+                    "Completed all tasks for 7 days");
+        }
+
+        // Task Master (50 tasks overall)
+        if (totalTasksCompletedOverall >= 50) {
+            unlockBadge(db, uid, "task_master",
+                    "Task Master",
+                    "Completed 50 tasks");
+        }
+    }
+
+    private void unlockBadge(FirebaseFirestore db, String uid,
+                             String badgeId, String title, String desc) {
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("title", title);
+        data.put("description", desc);
+        data.put("unlocked", true);
+
+        db.collection("Users")
+                .document(uid)
+                .collection("badges")
+                .document(badgeId)
+                .set(data);
+    }
+
+    private void loadTotalCompletedTasksAndUnlockBadges(int currentStreak) {
+
+        if (currentUser == null) return;
+
+        String uid = currentUser.getUid();
+
+        FirebaseFirestore.getInstance()
+                .collection("Tasks")
+                .document(uid)
+                .collection("dates")
+                .get()
+                .addOnSuccessListener(dates -> {
+
+                    final int[] totalDone = {0};
+
+                    for (QueryDocumentSnapshot dateDoc : dates) {
+                        dateDoc.getReference()
+                                .collection("items")
+                                .get()
+                                .addOnSuccessListener(items -> {
+                                    for (QueryDocumentSnapshot doc : items) {
+                                        Boolean completed = doc.getBoolean("completed");
+                                        if (completed != null && completed) totalDone[0]++;
+                                    }
+
+                                    // jab saare complete ho jayein (simple version)
+                                    checkAndUnlockBadges(currentStreak, 0, totalDone[0]);
+                                });
+                    }
+                });
     }
 }

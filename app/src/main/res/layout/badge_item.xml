@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="12dp"
+    android:layout_margin="6dp"
+    android:background="@drawable/bg_badge_card">
+
+    <!-- Badge Icon -->
+    <ImageView
+        android:id="@+id/imgBadge"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:scaleType="centerCrop"
+        tools:srcCompat="@drawable/badge" />
+
+    <!-- Badge Title -->
+    <TextView
+        android:id="@+id/txtBadgeTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="5-Day Streak Achiever"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="@android:color/black"
+        android:gravity="center"
+        android:layout_marginTop="8dp" />
+
+    <!-- Badge Description -->
+    <TextView
+        android:id="@+id/txtBadgeDesc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Completed all tasks for 5 days"
+        android:textSize="12sp"
+        android:textColor="@color/black"
+        android:gravity="center"
+        android:layout_marginTop="4dp" />
+
+    <!-- Badge Status -->
+    <TextView
+        android:id="@+id/txtBadgeStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Locked 🔒"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:layout_marginTop="6dp"
+        android:textColor="@android:color/holo_red_dark"
+        tools:text="Unlocked 🎉" />
+
+</LinearLayout>

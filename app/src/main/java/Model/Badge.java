@@ -1,9 +1,14 @@
 package Model;
 
 public class Badge {
+
     private String title;
     private String desc;
     private boolean unlocked;
+
+    public Badge() {
+        // Required empty constructor for Firebase
+    }
 
     public Badge(String title, String desc, boolean unlocked) {
         this.title = title;

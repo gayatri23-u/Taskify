@@ -1,6 +1,7 @@
 package com.example.scheduletracker;
 
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -25,11 +26,16 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class dashboard extends AppCompatActivity {
 
@@ -104,10 +110,6 @@ public class dashboard extends AppCompatActivity {
                     startActivity(new Intent(dashboard.this, settings.class));
                     return true;
 
-                } else if (id == R.id.menu_notifications) {
-                    // Open Notifications page
-                    startActivity(new Intent(dashboard.this, notifications.class));
-                    return true;
 
                 } else if (id == R.id.menu_logout) {
                     showLogoutDialog();   // show confirmation first
@@ -120,7 +122,7 @@ public class dashboard extends AppCompatActivity {
             popupMenu.show();
         });
 
-        //stast details
+        //stats details
         loadCalendarFromFirebase();
         loadTodayProgress();
         loadCurrentStreak();
@@ -128,6 +130,20 @@ public class dashboard extends AppCompatActivity {
 
         //reminders call
         scheduleDailyReminders();
+
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+
+                requestPermissions(
+                        new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                        101
+                );
+            }
+        }
+
+        //create all the batches whether locked or unlocked
+        seedBadgesIfMissing();
     }
 
     @Override
@@ -350,17 +366,15 @@ public class dashboard extends AppCompatActivity {
                 .get()
                 .addOnSuccessListener(snapshot -> {
 
-                    if (snapshot.isEmpty()) {
-                        txtStreakCount.setText(streak + " Days");
-                        return;
-                    }
-
-                    boolean allDone = true;
-                    for (QueryDocumentSnapshot doc : snapshot) {
-                        Boolean completed = doc.getBoolean("completed");
-                        if (completed == null || !completed) {
-                            allDone = false;
-                            break;
+                    boolean allDone = false;
+                    if (!snapshot.isEmpty()) {
+                        allDone = true;
+                        for (QueryDocumentSnapshot doc : snapshot) {
+                            Boolean completed = doc.getBoolean("completed");
+                            if (completed == null || !completed) {
+                                allDone = false;
+                                break;
+                            }
                         }
                     }
 
@@ -369,14 +383,6 @@ public class dashboard extends AppCompatActivity {
                         calculateStreak(cal, streak + 1);
                     } else {
                         txtStreakCount.setText(streak + " Days");
-                        //badge unloack check
-                        checkAndUnlockBadges(
-                                streak,
-                                0,
-                                0
-                        );
-
-                        //badge unlock logic
                         loadTotalCompletedTasksAndUnlockBadges(streak);
                     }
                 });
@@ -580,80 +586,205 @@ public class dashboard extends AppCompatActivity {
     }
 
 
-    //badge uloack logic
+    //badge unlock logic
     private void checkAndUnlockBadges(int currentStreak, int totalTasksCompletedThisWeek, int totalTasksCompletedOverall) {
 
         if (currentUser == null) return;
-
         String uid = currentUser.getUid();
         FirebaseFirestore db = FirebaseFirestore.getInstance();
 
-        //  5-Day Streak
-        if (currentStreak >= 5) {
-            unlockBadge(db, uid, "5_day_streak",
-                    "5-Day Streak Achiever",
-                    "Completed all tasks for 5 days");
-        }
+        if (currentStreak >= 3) unlockBadge(db, uid, "focus_master");
 
-        // Perfect Week (7 days streak)
-        if (currentStreak >= 7) {
-            unlockBadge(db, uid, "perfect_week",
-                    "Perfect Week",
-                    "Completed all tasks for 7 days");
-        }
+        if (currentStreak >= 5) unlockBadge(db, uid, "5_day_streak");
 
-        // Task Master (50 tasks overall)
-        if (totalTasksCompletedOverall >= 50) {
-            unlockBadge(db, uid, "task_master",
-                    "Task Master",
-                    "Completed 50 tasks");
-        }
+        if (currentStreak >= 7) unlockBadge(db, uid, "perfect_week");
+
+        if (totalTasksCompletedOverall >= 50) unlockBadge(db, uid, "task_master");
+
+        if (totalTasksCompletedOverall >= 100) unlockBadge(db, uid, "productivity_pro");
+
+        checkWeekendWarriorUnlock();
+        checkEarlyBirdUnlock();
+        checkNightOwlUnlock();
     }
 
-    private void unlockBadge(FirebaseFirestore db, String uid,
-                             String badgeId, String title, String desc) {
+    private void unlockBadge(FirebaseFirestore db, String uid, String badgeId) {
 
-        Map<String, Object> data = new HashMap<>();
-        data.put("title", title);
-        data.put("description", desc);
-        data.put("unlocked", true);
+        Map<String, Object> update = new HashMap<>();
+        update.put("unlocked", true);
 
         db.collection("Users")
                 .document(uid)
                 .collection("badges")
                 .document(badgeId)
-                .set(data);
+                .set(update, com.google.firebase.firestore.SetOptions.merge());
     }
 
     private void loadTotalCompletedTasksAndUnlockBadges(int currentStreak) {
-
         if (currentUser == null) return;
-
         String uid = currentUser.getUid();
 
-        FirebaseFirestore.getInstance()
-                .collection("Tasks")
-                .document(uid)
-                .collection("dates")
-                .get()
-                .addOnSuccessListener(dates -> {
+        db.collection("Tasks").document(uid).collection("dates").get()
+                .addOnSuccessListener(dateSnapshots -> {
+                    final int[] totalTasksCompleted = {0};
 
-                    final int[] totalDone = {0};
+                    if (dateSnapshots.isEmpty()) {
+                        checkAndUnlockBadges(currentStreak, 0, 0);
+                        return;
+                    }
 
-                    for (QueryDocumentSnapshot dateDoc : dates) {
-                        dateDoc.getReference()
-                                .collection("items")
-                                .get()
-                                .addOnSuccessListener(items -> {
-                                    for (QueryDocumentSnapshot doc : items) {
-                                        Boolean completed = doc.getBoolean("completed");
-                                        if (completed != null && completed) totalDone[0]++;
+                    AtomicInteger pendingDates = new AtomicInteger(dateSnapshots.size());
+
+                    for (QueryDocumentSnapshot dateDoc : dateSnapshots) {
+                        dateDoc.getReference().collection("items").get()
+                                .addOnCompleteListener(task -> {
+                                    if (task.isSuccessful()) {
+                                        for (QueryDocumentSnapshot itemDoc : task.getResult()) {
+                                            if (itemDoc.getBoolean("completed") != null && itemDoc.getBoolean("completed")) {
+                                                totalTasksCompleted[0]++;
+                                            }
+                                        }
                                     }
-
-                                    // jab saare complete ho jayein (simple version)
-                                    checkAndUnlockBadges(currentStreak, 0, totalDone[0]);
+                                    if (pendingDates.decrementAndGet() == 0) {
+                                        checkAndUnlockBadges(currentStreak, 0, totalTasksCompleted[0]);
+                                    }
                                 });
                     }
+                })
+                .addOnFailureListener(e -> {
+                    checkAndUnlockBadges(currentStreak, 0, 0);
                 });
+    }
+
+
+    private void seedBadgesIfMissing() {
+        FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
+        if (user == null) return;
+
+        String uid = user.getUid();
+        FirebaseFirestore db = FirebaseFirestore.getInstance();
+
+        // Define all badges your app supports
+        Map<String, Map<String, Object>> allBadges = new HashMap<>();
+
+        Map<String, Object> badge1 = new HashMap<>();
+        badge1.put("title", "5-Day Streak Achiever");
+        badge1.put("desc", "Completed all tasks for 5 days");
+        badge1.put("unlocked", false);
+        badge1.put("icon", "ic_badge_streak");
+        allBadges.put("5_day_streak", badge1);
+
+        Map<String, Object> badge2 = new HashMap<>();
+        badge2.put("title", "Perfect Week");
+        badge2.put("desc", "Completed all tasks for 7 days");
+        badge2.put("unlocked", false);
+        badge2.put("icon", "ic_badge_week");
+        allBadges.put("perfect_week", badge2);
+
+        Map<String, Object> badge3 = new HashMap<>();
+        badge3.put("title", "Task Master");
+        badge3.put("desc", "Completed 50 tasks");
+        badge3.put("unlocked", false);
+        badge3.put("icon", "ic_badge_master");
+        allBadges.put("task_master", badge3);
+
+        Map<String, Object> earlyBird = new HashMap<>();
+        earlyBird.put("title", "Early Bird");
+        earlyBird.put("desc", "Completed a task before 9 AM");
+        earlyBird.put("unlocked", false);
+        earlyBird.put("icon", "ic_badge_early_bird");
+        allBadges.put("early_bird", earlyBird);
+
+        Map<String, Object> nightOwl = new HashMap<>();
+        nightOwl.put("title", "Night Owl");
+        nightOwl.put("desc", "Completed a task after 10 PM");
+        nightOwl.put("unlocked", false);
+        nightOwl.put("icon", "ic_badge_night_owl");
+        allBadges.put("night_owl", nightOwl);
+
+        Map<String, Object> consistency = new HashMap<>();
+        consistency.put("title", "Consistency Champ");
+        consistency.put("desc", "Completed tasks on 10 different days");
+        consistency.put("unlocked", false);
+        consistency.put("icon", "ic_badge_consistency");
+        allBadges.put("consistency_champ", consistency);
+
+        Map<String, Object> focus = new HashMap<>();
+        focus.put("title", "Focus Master");
+        focus.put("desc", "Completed all tasks for 3 days in a row");
+        focus.put("unlocked", false);
+        focus.put("icon", "ic_badge_focus");
+        allBadges.put("focus_master", focus);
+
+        Map<String, Object> weekend = new HashMap<>();
+        weekend.put("title", "Weekend Warrior");
+        weekend.put("desc", "Completed tasks on both Saturday & Sunday");
+        weekend.put("unlocked", false);
+        weekend.put("icon", "ic_badge_weekend");
+        allBadges.put("weekend_warrior", weekend);
+
+        Map<String, Object> pro = new HashMap<>();
+        pro.put("title", "Productivity Pro");
+        pro.put("desc", "Completed 100 tasks in total");
+        pro.put("unlocked", false);
+        pro.put("icon", "ic_badge_pro");
+        allBadges.put("productivity_pro", pro);
+
+        // Fetch existing badges for this user
+        db.collection("Users")
+                .document(uid)
+                .collection("badges")
+                .get()
+                .addOnSuccessListener(snapshot -> {
+
+                    // Track which badge IDs already exist
+                    Set<String> existingIds = new HashSet<>();
+                    for (QueryDocumentSnapshot doc : snapshot) {
+                        existingIds.add(doc.getId());
+                    }
+
+                    // Create only missing ones
+                    for (Map.Entry<String, Map<String, Object>> entry : allBadges.entrySet()) {
+                        String badgeId = entry.getKey();
+                        Map<String, Object> data = entry.getValue();
+
+                        if (!existingIds.contains(badgeId)) {
+                            db.collection("Users")
+                                    .document(uid)
+                                    .collection("badges")
+                                    .document(badgeId)
+                                    .set(data);
+                        }
+                    }
+                });
+    }
+
+
+    private void checkWeekendWarriorUnlock() {
+        Calendar cal = Calendar.getInstance();
+        int day = cal.get(Calendar.DAY_OF_WEEK);
+
+        if (day == Calendar.SATURDAY || day == Calendar.SUNDAY) {
+            unlockBadge(FirebaseFirestore.getInstance(), currentUser.getUid(), "weekend_warrior");
+        }
+    }
+
+
+    private void checkEarlyBirdUnlock() {
+        Calendar cal = Calendar.getInstance();
+        int hour = cal.get(Calendar.HOUR_OF_DAY);
+
+        if (hour < 9) {
+            unlockBadge(FirebaseFirestore.getInstance(), currentUser.getUid(), "early_bird");
+        }
+    }
+
+    private void checkNightOwlUnlock() {
+        Calendar cal = Calendar.getInstance();
+        int hour = cal.get(Calendar.HOUR_OF_DAY);
+
+        if (hour >= 22) {
+            unlockBadge(FirebaseFirestore.getInstance(), currentUser.getUid(), "night_owl");
+        }
     }
 }

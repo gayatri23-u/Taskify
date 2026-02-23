@@ -10,9 +10,9 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
-import java.util.List;
-
 import Model.Badge;
+
+import java.util.List;
 
 public class BadgeAdapter extends RecyclerView.Adapter<BadgeAdapter.BadgeVH> {
 
@@ -26,7 +26,7 @@ public class BadgeAdapter extends RecyclerView.Adapter<BadgeAdapter.BadgeVH> {
     @Override
     public BadgeVH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         View v = LayoutInflater.from(parent.getContext())
-                .inflate(R.layout.item_badge, parent, false);
+                .inflate(R.layout.badge_item, parent, false);
         return new BadgeVH(v);
     }
 
@@ -37,8 +37,21 @@ public class BadgeAdapter extends RecyclerView.Adapter<BadgeAdapter.BadgeVH> {
         holder.txtTitle.setText(badge.getTitle());
         holder.txtDesc.setText(badge.getDesc());
 
+        // 🔽 Set icon based on badge title (or id)
+        int iconRes = R.drawable.badge;
+
+        if ("5-Day Streak Achiever".equals(badge.getTitle())) {
+            iconRes = R.drawable.badge;
+        } else if ("Perfect Week".equals(badge.getTitle())) {
+            iconRes = R.drawable.badge;
+        } else if ("Task Master".equals(badge.getTitle())) {
+            iconRes = R.drawable.badge;
+        }
+
+        holder.imgBadge.setImageResource(iconRes);
+
         if (badge.isUnlocked()) {
-            holder.txtStatus.setText("Unlocked");
+            holder.txtStatus.setText("Unlocked 🎉");
             holder.txtStatus.setTextColor(
                     ContextCompat.getColor(holder.itemView.getContext(), R.color.green)
             );
@@ -70,7 +83,6 @@ public class BadgeAdapter extends RecyclerView.Adapter<BadgeAdapter.BadgeVH> {
         }
     }
 
-    // ✅ Firebase ke baad list update karne ke liye
     public void setBadges(List<Badge> newBadges) {
         this.badges = newBadges;
         notifyDataSetChanged();
